@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">PaddyLoadTracker</string>
+    <string name="title_activity_main">PaddyLoadTracker</string>
+    <string name="package_name">com.local.paddyloadtracker</string>
+    <string name="custom_url_scheme">com.local.paddyloadtracker</string>
+</resources>

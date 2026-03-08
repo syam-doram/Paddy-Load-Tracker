@@ -1,0 +1,5 @@
+{
+  "name": "Paddy Load Tracker",
+  "description": "Track paddy bags loaded into lorries after harvest, including farmer details and bag counts.",
+  "requestFramePermissions": []
+}
