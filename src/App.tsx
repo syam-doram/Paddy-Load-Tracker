@@ -48,14 +48,31 @@ import {
 import { Lorry, FarmerLoad, LorryDetail, User as UserType, MarketEntry } from './types';
 import MarketEntryPage from './MarketEntryPage';
 
+// Helper to get YYYY-MM-DD in local time
+function getLocalYMD(dateObj: Date) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+const today = getLocalYMD(new Date());
+
 export default function App() {
-  // All hooks and logic must be inside the App function
   const [selectedArea, setSelectedArea] = useState<string>('All');
   const [vehicleType, setVehicleType] = useState<string>('');
   const [vehicleTypes, setVehicleTypes] = useState<string[]>([]);
   const [user, setUser] = useState<UserType | null>(() => {
     const saved = localStorage.getItem('paddy_user');
     return saved ? JSON.parse(saved) : null;
+  });
+  const [view, setView] = useState<'dashboard' | 'lorry-detail' | 'tractor-detail' | 'truck-detail' | 'new-lorry' | 'new-tractor' | 'new-truck' | 'analytics' | 'labour-management' | 'market' | 'market-entry' | 'login' | 'register' | 'onboarding'>(() => {
+    const saved = localStorage.getItem('paddy_user');
+    if (saved) {
+      const u = JSON.parse(saved);
+      return u.onboarded ? 'dashboard' : 'onboarding';
+    }
+    return 'login';
   });
   const [tractors, setTractors] = useState<any[]>([]);
   const [trucks, setTrucks] = useState<any[]>([]);
@@ -84,31 +101,7 @@ export default function App() {
   const [marketEntries, setMarketEntries] = useState<MarketEntry[]>([]);
   const [sideOpen, setSideOpen] = useState(false);
   const [newMarketForm, setNewMarketForm] = useState({ name: '', price: '', unit: '/qtl', change_percent: '', region: '', trend: '' });
-
-  // ...all handlers, effects, helpers, and logic from the file go here...
-  // ...existing code...
-
-  // Only one return statement, returning a single parent div
-  return (
-    <div className="min-h-screen bg-zinc-50 flex flex-col">
-      {/* ...all JSX, header, dashboard, AnimatePresence, etc. go here... */}
-      {/* ...existing code... */}
-    </div>
-  );
-}
-
-// Remove any duplicate or misplaced code outside the App function
-
-// Helper to get YYYY-MM-DD in local time
-function getLocalYMD(dateObj: Date) {
-  const y = dateObj.getFullYear();
-  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const d = String(dateObj.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-const today = getLocalYMD(new Date());
-const isToday = selectedDate === today;
+  const isToday = selectedDate === today;
 
   const getApiUrl = (endpoint: string) => {
     if (Capacitor.isNativePlatform()) {
@@ -116,20 +109,6 @@ const isToday = selectedDate === today;
     }
     return endpoint;
   };
-
-  // Auth states
-  const [authForm, setAuthForm] = useState({ username: '', password: '', full_name: '' });
-  const [authError, setAuthError] = useState('');
-
-  // Form states
-  const [newLorryForm, setNewLorryForm] = useState({ lorry_number: '', driver_name: '', vehicle_type: '' });
-  const [newLoadForm, setNewLoadForm] = useState({ farmer_name: '', bag_count: '', labour_title: '', moisture_percent: '', weight_qlt: '', paddy_type: '', area: '' });
-  const [newLabourForm, setNewLabourForm] = useState({ name: '', title_name: '' });
-
-  // Market + UI states
-  const [marketEntries, setMarketEntries] = useState<MarketEntry[]>([]);
-  const [sideOpen, setSideOpen] = useState(false);
-  const [newMarketForm, setNewMarketForm] = useState({ name: '', price: '', unit: '/qtl', change_percent: '', region: '', trend: '' });
 
   useEffect(() => {
     if (user && user.onboarded) {
@@ -358,6 +337,44 @@ const isToday = selectedDate === today;
     }
   };
 
+  const handleCreateTractor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(getApiUrl('/api/tractors'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lorry_number: newLorryForm.lorry_number, driver_name: newLorryForm.driver_name, date: selectedDate })
+      });
+      const data = await res.json();
+      setSelectedLorryId(data.id);
+      setView('tractor-detail');
+      setNewLorryForm({ lorry_number: '', driver_name: '', vehicle_type: '' });
+      fetchLorries();
+      fetchStats();
+    } catch (err) {
+      console.error("Failed to create tractor", err);
+    }
+  };
+
+  const handleCreateTruck = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(getApiUrl('/api/trucks'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lorry_number: newLorryForm.lorry_number, driver_name: newLorryForm.driver_name, date: selectedDate })
+      });
+      const data = await res.json();
+      setSelectedLorryId(data.id);
+      setView('truck-detail');
+      setNewLorryForm({ lorry_number: '', driver_name: '', vehicle_type: '' });
+      fetchLorries();
+      fetchStats();
+    } catch (err) {
+      console.error("Failed to create truck", err);
+    }
+  };
+
   const handleAddLoad = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedLorryId) return;
@@ -509,11 +526,39 @@ const isToday = selectedDate === today;
               </button>
               <button 
                 onClick={() => setView('analytics')}
+                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
+                  view === 'analytics' 
+                    ? 'bg-white text-zinc-900 shadow-sm' 
+                    : 'text-zinc-500 hover:text-zinc-700'
+                }`}
               >
                 <BarChart3 className="w-4 h-4" />
                 Analytics
               </button>
+              <button 
+                onClick={() => setView('labour-management')}
+                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
+                  view === 'labour-management' 
+                    ? 'bg-white text-zinc-900 shadow-sm' 
+                    : 'text-zinc-500 hover:text-zinc-700'
+                }`}
+              >
+                <Users className="w-4 h-4" />
+                Labours
+              </button>
             </nav>
+
+            <div className="flex items-center gap-2 bg-zinc-100 px-3 py-1.5 rounded-md border border-zinc-200">
+              <Calendar className="w-4 h-4 text-zinc-500" />
+              <input
+                type="date"
+                className="bg-transparent text-sm font-medium outline-none border-none focus:ring-0"
+                value={selectedDate}
+                max={today}
+                onChange={e => setSelectedDate(e.target.value)}
+                aria-label="Select date"
+              />
+            </div>
           </div>
         </header>
       )}
@@ -574,42 +619,6 @@ const isToday = selectedDate === today;
             </div>
           )}
         </main>
-      )}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
-                  view === 'analytics' 
-                    ? 'bg-white text-zinc-900 shadow-sm' 
-                    : 'text-zinc-500 hover:text-zinc-700'
-                }`}
-              >
-                <BarChart3 className="w-4 h-4" />
-                Analytics
-              </button>
-              <button 
-                onClick={() => setView('labour-management')}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
-                  view === 'labour-management' 
-                    ? 'bg-white text-zinc-900 shadow-sm' 
-                    : 'text-zinc-500 hover:text-zinc-700'
-                }`}
-              >
-                <Users className="w-4 h-4" />
-                Labours
-              </button>
-            </nav>
-
-            <div className="flex items-center gap-2 bg-zinc-100 px-3 py-1.5 rounded-md border border-zinc-200">
-              <Calendar className="w-4 h-4 text-zinc-500" />
-              <input
-                type="date"
-                className="bg-transparent text-sm font-medium outline-none border-none focus:ring-0"
-                value={selectedDate}
-                max={today}
-                onChange={e => setSelectedDate(e.target.value)}
-                aria-label="Select date"
-              />
-            </div>
-          </div>
-        </header>
       )}
 
       <AnimatePresence>
