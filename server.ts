@@ -1,3 +1,5 @@
+
+
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
@@ -22,7 +24,24 @@ db.exec(`
     onboarded INTEGER DEFAULT 0
   );
 
-  CREATE TABLE IF NOT EXISTS lorries (    
+  CREATE TABLE IF NOT EXISTS lorries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lorry_number TEXT NOT NULL,
+    driver_name TEXT,
+    vehicle_type TEXT,
+    date TEXT NOT NULL,
+    status TEXT DEFAULT 'loading'
+  );
+
+  CREATE TABLE IF NOT EXISTS tractors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lorry_number TEXT NOT NULL,
+    driver_name TEXT,
+    date TEXT NOT NULL,
+    status TEXT DEFAULT 'loading'
+  );
+
+  CREATE TABLE IF NOT EXISTS trucks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lorry_number TEXT NOT NULL,
     driver_name TEXT,
@@ -39,8 +58,8 @@ db.exec(`
     moisture_percent REAL,
     weight_qlt REAL,
     paddy_type TEXT,
-    area TEXT,
-    FOREIGN KEY(lorry_id) REFERENCES lorries(id)
+    area TEXT
+    ,FOREIGN KEY(lorry_id) REFERENCES lorries(id)
   );
 
   CREATE TABLE IF NOT EXISTS labours (
@@ -61,6 +80,17 @@ db.exec(`
   );
 `);
 
+// Migration: Add vehicle_type to lorries if it doesn't exist
+try {
+  const lorryTableInfo = db.prepare("PRAGMA table_info(lorries)").all() as any[];
+  if (!lorryTableInfo.some((col) => col.name === "vehicle_type")) {
+    db.prepare("ALTER TABLE lorries ADD COLUMN vehicle_type TEXT").run();
+    console.log("Migration: Added vehicle_type column to lorries");
+  }
+} catch (e: any) {
+  console.error("Migration error (vehicle_type):", e.message);
+}
+
 // Migration: Add columns to farmer_loads if they don't exist
 try {
   const tableInfo = db.prepare("PRAGMA table_info(farmer_loads)").all() as any[];
@@ -77,6 +107,26 @@ try {
   addColumn('area', 'TEXT');
 } catch (e: any) {
   console.error("Migration error:", e.message);
+}
+// Migration: Normalize vehicle_type values to 'Truck', 'Tractor', 'Lorry'
+try {
+  const validTypes = ['Truck', 'Tractor', 'Lorry'];
+  const allTypes = db.prepare("SELECT DISTINCT vehicle_type FROM lorries").all();
+  for (const row of allTypes) {
+    const type = row.vehicle_type;
+    if (type && !validTypes.includes(type)) {
+      // Try to map similar names
+      let newType = null;
+      if (type.toLowerCase().includes('truck')) newType = 'Truck';
+      else if (type.toLowerCase().includes('tractor')) newType = 'Tractor';
+      else if (type.toLowerCase().includes('lorry')) newType = 'Lorry';
+      if (newType) {
+        db.prepare("UPDATE lorries SET vehicle_type = ? WHERE vehicle_type = ?").run(newType, type);
+      }
+    }
+  }
+} catch (e) {
+  console.error('Migration error (normalize vehicle_type):', e.message);
 }
 
 // Seed basic market entries if none exist
@@ -103,10 +153,76 @@ try {
 async function startServer() {
   const app = express();
   const PORT = 5000;
+  // Danger: Clear all records endpoint (for development/testing only)
+  app.post('/api/clear-all', (req, res) => {
+    try {
+      db.prepare('DELETE FROM users').run();
+      db.prepare('DELETE FROM lorries').run();
+      db.prepare('DELETE FROM tractors').run();
+      db.prepare('DELETE FROM trucks').run();
+      db.prepare('DELETE FROM farmer_loads').run();
+      db.prepare('DELETE FROM labours').run();
+      db.prepare('DELETE FROM paddy_markets').run();
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  // Get a single tractor by id
+  app.get('/api/tractors/:id', (req, res) => {
+    try {
+      const tractor = db.prepare('SELECT * FROM tractors WHERE id = ?').get(req.params.id);
+      if (!tractor) return res.status(404).json({ error: 'Tractor not found' });
+      const loads = db.prepare('SELECT * FROM farmer_loads WHERE lorry_id = ?').all(req.params.id);
+      res.json({ ...tractor, loads });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
+  // Get a single truck by id
+  app.get('/api/trucks/:id', (req, res) => {
+    try {
+      const truck = db.prepare('SELECT * FROM trucks WHERE id = ?').get(req.params.id);
+      if (!truck) return res.status(404).json({ error: 'Truck not found' });
+      const loads = db.prepare('SELECT * FROM farmer_loads WHERE lorry_id = ?').all(req.params.id);
+      res.json({ ...truck, loads });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
   app.use(express.json());
   app.use(cors());
+    // Get all tractors
+    app.get("/api/tractors", (req, res) => {
+      try {
+        const tractors = db.prepare("SELECT * FROM tractors").all();
+        res.json(tractors);
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
 
+    // Get all trucks
+    app.get("/api/trucks", (req, res) => {
+      try {
+        const trucks = db.prepare("SELECT * FROM trucks").all();
+        res.json(trucks);
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+  
+// API endpoint to get unique vehicle types
+app.get('/api/vehicle-types', (req, res) => {
+  try {
+    const rows = db.prepare('SELECT DISTINCT vehicle_type FROM lorries WHERE vehicle_type IS NOT NULL AND vehicle_type != ""').all();
+    const types = rows.map((row: any) => row.vehicle_type);
+    res.json(types);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch vehicle types' });
+  }
+});
   // Auth Routes
   app.post("/api/register", (req, res) => {
     const { username, password, full_name } = req.body;
@@ -136,18 +252,22 @@ async function startServer() {
 
   // API Routes
   
-  // Get all lorries for a specific date
+  // Get all lorries for a specific date and vehicle_type
   app.get("/api/lorries", (req, res) => {
     try {
       const date = req.query.date as string || new Date().toISOString().split('T')[0];
-      const lorries = db.prepare("SELECT * FROM lorries WHERE date = ?").all(date);
-      
+      const vehicle_type = req.query.vehicle_type as string | undefined;
+      let lorries;
+      if (vehicle_type) {
+        lorries = db.prepare("SELECT * FROM lorries WHERE date = ? AND vehicle_type = ?").all(date, vehicle_type);
+      } else {
+        lorries = db.prepare("SELECT * FROM lorries WHERE date = ?").all(date);
+      }
       // Enrich with total bags
       const enrichedLorries = lorries.map((lorry: any) => {
         const loads = db.prepare("SELECT SUM(bag_count) as total FROM farmer_loads WHERE lorry_id = ?").get(lorry.id) as any;
         return { ...lorry, total_bags: loads?.total || 0 };
       });
-      
       res.json(enrichedLorries);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -157,15 +277,47 @@ async function startServer() {
   // Create a new lorry record
   app.post("/api/lorries", (req, res) => {
     try {
-      const { lorry_number, driver_name, date } = req.body;
-      
+      const { lorry_number, driver_name, vehicle_type, date } = req.body;
       // Prevent future dates
       const today = new Date().toISOString().split('T')[0];
       if (date > today) {
         return res.status(400).json({ error: "Cannot create records for future dates" });
       }
+      const allowedTypes = ['Truck', 'Tractor', 'Lorry'];
+      if (!vehicle_type || !allowedTypes.includes(vehicle_type)) {
+        return res.status(400).json({ error: "vehicle_type must be one of Truck, Tractor, Lorry" });
+      }
+      const result = db.prepare("INSERT INTO lorries (lorry_number, driver_name, vehicle_type, date) VALUES (?, ?, ?, ?)").run(lorry_number, driver_name, vehicle_type, date);
+      res.json({ id: result.lastInsertRowid });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-      const result = db.prepare("INSERT INTO lorries (lorry_number, driver_name, date) VALUES (?, ?, ?)").run(lorry_number, driver_name, date);
+  // Create a new tractor record
+  app.post("/api/tractors", (req, res) => {
+    try {
+      const { lorry_number, driver_name, date } = req.body;
+      const today = new Date().toISOString().split('T')[0];
+      if (date > today) {
+        return res.status(400).json({ error: "Cannot create records for future dates" });
+      }
+      const result = db.prepare("INSERT INTO tractors (lorry_number, driver_name, date) VALUES (?, ?, ?)").run(lorry_number, driver_name, date);
+      res.json({ id: result.lastInsertRowid });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Create a new truck record
+  app.post("/api/trucks", (req, res) => {
+    try {
+      const { lorry_number, driver_name, date } = req.body;
+      const today = new Date().toISOString().split('T')[0];
+      if (date > today) {
+        return res.status(400).json({ error: "Cannot create records for future dates" });
+      }
+      const result = db.prepare("INSERT INTO trucks (lorry_number, driver_name, date) VALUES (?, ?, ?)").run(lorry_number, driver_name, date);
       res.json({ id: result.lastInsertRowid });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -369,12 +521,12 @@ async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-  root: process.cwd(),
-  server: {
-    middlewareMode: true
-  },
-  appType: "spa"
-});
+      root: process.cwd(),
+      server: {
+        middlewareMode: true
+      },
+      appType: "spa"
+    });
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
@@ -394,4 +546,7 @@ async function startServer() {
   }
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("Fatal error in startServer:", err);
+  process.exit(1);
+});

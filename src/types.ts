@@ -2,6 +2,7 @@ export interface Lorry {
   id: number;
   lorry_number: string;
   driver_name: string;
+  vehicle_type: string;
   date: string;
   status: 'loading' | 'completed';
   total_bags?: number;
